@@ -2,3 +2,5 @@ cached.php
 ==========
 
 PHP Memcache Server Implementation
+
+A test was conducted inserting 100k key/value pairs.  This implementation of a memcache server that is database backed used ~5x more memory and was 3.5x slower than the official memcache server.
