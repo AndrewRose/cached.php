@@ -1,3 +1,4 @@
+#!/usr/bin/php
 <?php
 
 namespace Cached;
@@ -12,6 +13,20 @@ class Handler
 
 	public function __construct()
 	{
+		$this->db = new \PDO('mysql:host=localhost;dbname=cached', 'root', '');
+		$this->dbStmtInsert = $this->db->prepare("INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)");
+
+		if(($result = $this->db->query('SELECT k, data, flags FROM cache')))
+		{
+			if($result->rowCount())
+			{
+				while($row = $result->fetch(\PDO::FETCH_ASSOC))
+				{
+					$this->data[$row['k']] = [$row['data'], $row['flags']];
+				}
+			}
+		}
+
 		$socket = stream_socket_server ('tcp://0.0.0.0:11211', $errno, $errstr);
 		stream_set_blocking($socket, 0);
 		$base = event_base_new();
@@ -34,9 +49,6 @@ class Handler
 		$this->connections[$id]['dataMode'] = FALSE;
 		$this->connections[$id]['dataModeResume'] = FALSE;
 		$this->connections[$id]['dataModeLength'] = FALSE;
-
-$this->connections[$id]['db'] = mysql_connect('localhost', 'root', '');
-mysql_select_db('cached', $this->connections[$id]['db']);
 
 		$buffer = event_buffer_new($connection, [&$this, 'ev_read'], NULL, [&$this, 'ev_error'], $id);
 
@@ -98,12 +110,25 @@ mysql_select_db('cached', $this->connections[$id]['db']);
 		$this->connections[$id]['dataModeLength'] = $dataLength;
 	}
 
+	protected function insert($key, $data, $flags)
+	{
+		$this->dbStmtInsert->execute([
+			':k' => $key,
+			':data' => $data,
+			':flags' => $flags
+		]);
+
+		$this->data[$key] = [$data, $flags];
+	}
+
 	protected function cmd($buffer, $id, $cmd, $line, $data=FALSE)
 	{
 		// <command name> <key> <flags> <exptime> <bytes> [noreply]\r\n
 		switch($cmd)
 		{
 			case 'set':
+			case 'add':
+			case 'replace':
 			{
 				if($data===FALSE)
 				{
@@ -114,9 +139,18 @@ mysql_select_db('cached', $this->connections[$id]['db']);
 				{
 					//list($key, $flags, $exptime, $bytes, $noreply) = explode(' ', $line);
 					list($key, $flags, $exptime, $bytes) = explode(' ', $line);
-					$this->data[$key] = $data;
-mysql_query("insert into cache(`key`, data) values('".mysql_real_escape_string($key)."', '".mysql_real_escape_string($data)."')", $this->connections[$id]['db']);
-					$this->ev_write($id, "STORED\r\n");
+					
+					if($cmd == 'set' ||
+						($cmd == 'add' && !isset($this->data[$key])) ||
+						($cmd == 'replace' && isset($this->data[$key])))
+					{
+						$this->insert($key, $data, $flags);
+						$this->ev_write($id, "STORED\r\n");
+					}
+					else
+					{
+						$this->ev_write($id, "NOT_STORED\r\n");
+					}
 				}
 			}
 			break;
@@ -127,17 +161,19 @@ mysql_query("insert into cache(`key`, data) values('".mysql_real_escape_string($
 			//  END\r\n
 			case 'get':
 			{
-				$key = trim($line);
-				$this->ev_write($id, 'VALUE '.$key.' 0 '.strlen($this->data[$key])."\r\n");
-				$this->ev_write($id, $this->data[$key]."\r\n");
+				$keys = explode(' ', trim($line));
+				foreach($keys as $key)
+				{
+					if(isset($this->data[$key])) // hit
+					{
+						$this->ev_write($id, 'VALUE '.$key.' 0 '.strlen($this->data[$key][0])."\r\n");
+						$this->ev_write($id, $this->data[$key][0]."\r\n");
+					} // else miss
+
+				}
 				$this->ev_write($id, "END\r\n");
 			}
 			break;
-
-			case 'dump':
-			{
-				print_r($this->data);
-			}
 
 			default:
 			{
