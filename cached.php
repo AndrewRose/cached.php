@@ -112,13 +112,17 @@ class Handler
 
 	protected function insert($key, $data, $flags)
 	{
-		$this->dbStmtInsert->execute([
+		if(!$this->dbStmtInsert->execute([
 			':k' => $key,
 			':data' => $data,
 			':flags' => $flags
-		]);
+		]))
+		{
+			return FALSE;
+		}
 
 		$this->data[$key] = [$data, $flags];
+		return TRUE;
 	}
 
 	protected function cmd($buffer, $id, $cmd, $line, $data=FALSE)
@@ -144,8 +148,14 @@ class Handler
 						($cmd == 'add' && !isset($this->data[$key])) ||
 						($cmd == 'replace' && isset($this->data[$key])))
 					{
-						$this->insert($key, $data, $flags);
-						$this->ev_write($id, "STORED\r\n");
+						if($this->insert($key, $data, $flags))
+						{
+							$this->ev_write($id, "STORED\r\n");
+						}
+						else
+						{
+							$this->ev_write($id, "SERVER_ERROR Failed to store key/value\r\n");
+						}
 					}
 					else
 					{
