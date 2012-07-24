@@ -89,6 +89,8 @@ class Handler
 		//$this->db = new \PDO('sqlite:cached.db');
 		$this->db = new \PDO('mysql:host=localhost;dbname=cached', 'root', '');
 		$this->dbStmtInsert = $this->db->prepare("INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)");
+		$this->dbStmtDelete = $this->db->prepare("DELETE FROM cache WHERE k = :k");
+		$this->dbStmtDeleteAll = $this->db->prepare("DELETE FROM cache");
 
 		if(($result = $this->db->query('SELECT k, data, flags FROM cache')))
 		{
@@ -202,13 +204,29 @@ class Handler
 			':k' => $key,
 			':data' => $data,
 			':flags' => $flags
-		]))
-		{
+		])){
 			return FALSE;
 		}
 
 		$this->data[$key] = [$data, $flags];
 		return TRUE;
+	}
+
+	protected function delete($key)
+	{
+		if(!isset($this->data[$key]))
+		{
+			return FALSE;
+		}
+
+		if(!$this->dbStmtDelete->execute([
+			':k' => $key
+		])){
+			return FALSE;
+		}
+
+		unset($this->data[$key]);
+		return TRUE;	
 	}
 
 	protected function cmd($buffer, $id, $cmd, $line, $data=FALSE)
@@ -282,6 +300,42 @@ class Handler
 
 				}
 				$this->ev_write($id, "END\r\n");
+			}
+			break;
+
+			case 'delete':
+			{
+				$tmp = explode(' ', trim($line));
+				$key = $tmp[0];
+				if(isset($this->data[$key]))
+				{
+					if($this->delete($key))
+					{
+						$this->ev_write($id, "DELETED\r\n");
+					}
+					else
+					{
+						$this->ev_write($id, "SERVER_ERROR Failed to delete key/value\r\n");
+					}
+				}
+				else
+				{
+					$this->ev_write($id, "NOT_FOUND\r\n");
+				}
+			}
+			break;
+
+			case 'flush_all':
+			{
+				$this->dbStmtDeleteAll->execute();
+				$this->data = [];
+				$this->ev_write($id, "OK\r\n");
+			}
+			break;
+
+			case 'quit':
+			{
+				$this->ev_close($id);
 			}
 			break;
 
