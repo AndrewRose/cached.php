@@ -3,4 +3,15 @@ cached.php
 
 PHP Memcache Server Implementation
 
-A test was conducted inserting 100k key/value pairs.  This implementation of a memcache server that is database backed used ~5x more memory and was 3.5x slower than the official memcache server.
+Developed with PHP 5.4.3 and modules: pdo_mysql, posix, libevent
+
+To install libevent:
+
+ pacman -S php-pear
+ pecl install libevent channel://pecl.php.net/libevent-0.0.5
+ echo "extension=libevent.so" >> /etc/php/conf.d/libevent.ini
+
+To start: ./cached.php
+To stop: killall cached.php
+
+An initial test was conducted inserting 100k key/value pairs.  This implementation of a memcache server that is database backed used ~5x more memory and was 3.5x slower than the official memcache server.
