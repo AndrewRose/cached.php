@@ -5,6 +5,8 @@ PHP Memcache Server Implementation
 
 Developed with PHP 5.4.3 and modules: pdo_mysql, posix, libevent
 
+Create a database called cached and import schema: mysql cached < db.sql
+
 To install libevent:
 
  pacman -S php-pear

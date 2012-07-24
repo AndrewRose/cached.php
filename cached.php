@@ -24,6 +24,7 @@ namespace Cached;
 
 class Handler
 {
+	private $version = 'cached.php v0.1';
 	public $connections = [];
 	public $buffers = [];
 	public $maxRead = 256;
@@ -37,6 +38,7 @@ class Handler
 		'rusage_user'           => 0,     // 32u.32u - Accumulated user time for this process (seconds:microseconds)
 		'rusage_system'         => 0,     // 32u.32u - Accumulated system time for this process (seconds:microseconds)
 		'curr_items'            => 0,     // 32u - Current number of items stored
+
 		'total_items'           => 0,     // 32u - Total number of items stored since the server started
 		'bytes'                 => 0,     // 64u - Current number of bytes used to store items
 		'curr_connections'      => 0,     // 32u - Number of open connections
@@ -81,6 +83,10 @@ class Handler
 	public function __construct($pid)
 	{
 		$this->stats['pid'] = $pid;
+		$this->stats['version'] = $this->version;
+		$this->stats['pointer_size'] = PHP_INT_SIZE==4?'32':(PHP_INT_SIZE==8?'64':'Unknown');
+
+		//$this->db = new \PDO('sqlite:cached.db');
 		$this->db = new \PDO('mysql:host=localhost;dbname=cached', 'root', '');
 		$this->dbStmtInsert = $this->db->prepare("INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)");
 
@@ -103,6 +109,18 @@ class Handler
 		event_base_set($event, $base);
 		event_add($event);
 		event_base_loop($base);
+	}
+
+	protected function updateStats()
+	{
+		$this->stats['uptime'] = explode(' ', exec('cat /proc/uptime'))[0];
+		$this->stats['time'] = time();
+
+		$pt = posix_times();
+		$this->stats['rusage_user'] = $pt['utime'];
+		$this->stats['rusage_system'] = $pt['stime'];
+
+		$this->stats['curr_items'] = sizeof($this->data);
 	}
 
 	protected function ev_accept($socket, $flag, $base)
@@ -267,9 +285,17 @@ class Handler
 			}
 			break;
 
+			// Response:
+			// STAT <name> <value>\r\n
+			// END\r\n
 			case 'stats':
 			{
-
+				$this->updateStats();
+				foreach($this->stats as $k => $v)
+				{
+					$this->ev_write($id, 'VALUE '.$k.' '.$v."\r\n");
+				}
+				$this->ev_write($id, "END\r\n");
 			}
 			break;
 
