@@ -88,9 +88,10 @@ class Handler
 
 		//$this->db = new \PDO('sqlite:cached.db');
 		$this->db = new \PDO('mysql:host=localhost;dbname=cached', 'root', '');
-		$this->dbStmtInsert = $this->db->prepare("INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)");
-		$this->dbStmtDelete = $this->db->prepare("DELETE FROM cache WHERE k = :k");
-		$this->dbStmtDeleteAll = $this->db->prepare("DELETE FROM cache");
+		$this->dbStmtInsert = $this->db->prepare('INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)');
+		$this->dbStmtUpdate = $this->db->prepare('UPDATE cache SET data = :data WHERE k = :k');
+		$this->dbStmtDelete = $this->db->prepare('DELETE FROM cache WHERE k = :k');
+		$this->dbStmtDeleteAll = $this->db->prepare('DELETE FROM cache');
 
 		if(($result = $this->db->query('SELECT k, data, flags FROM cache')))
 		{
@@ -163,7 +164,7 @@ class Handler
 
 	protected function ev_write($id, $string)
 	{
-echo '('.$id.')S: '.$string."\n";
+//echo '('.$id.')S: '.$string."\n";
 		event_buffer_write($this->buffers[$id], $string);
 	}
 
@@ -172,7 +173,7 @@ echo '('.$id.')S: '.$string."\n";
 		$this->connections[$id]['clientData'] .= event_buffer_read($buffer, $this->maxRead);
 		$clientDataLen = strlen($this->connections[$id]['clientData']);
 
-echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
+//echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 
 		if(!$this->connections[$id]['dataMode'] && ($pos = strpos($this->connections[$id]['clientData'], "\r\n"))) // add offset for faster search?
 		{
@@ -200,14 +201,27 @@ echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 
 	protected function insert($key, $data, $flags)
 	{
-		if(!$this->dbStmtInsert->execute([
-			':k' => $key,
-			':data' => $data,
-			':flags' => $flags
-		])){
-			return FALSE;
+		// TODO check key is valid.
+		if(isset($this->data[$key]))
+		{
+			if(!$this->dbStmtUpdate->execute([
+				':k' => $key,
+				':data' => $data
+			])){
+				echo 'failed update';
+				return FALSE;
+			}
 		}
-
+		else
+		{
+			if(!$this->dbStmtInsert->execute([
+				':k' => $key,
+				':data' => $data,
+				':flags' => $flags
+			])){
+				return FALSE;
+			}
+		}
 		$this->data[$key] = [$data, $flags];
 		return TRUE;
 	}
@@ -237,23 +251,33 @@ echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 			case 'set':
 			case 'add':
 			case 'replace':
+			case 'append':
+			case 'prepend':
 			{
+				$args = explode(' ', $line);
+				$argsCount = sizeof($args);
+
 				if($data===FALSE)
 				{
-					$tmp = explode(' ', $line); // grab count
-					$this->getData($buffer, $id, $cmd, $line, $tmp[3]);
+					if($argsCount != 4 && $argsCount != 5)
+					{
+						$this->ev_write($id, "CLIENT_ERROR unexpected number of command arguments, expected 4 or 5 but got: ".$argsCount."\r\n");
+						$this->connections[$id]['dataMode'] = FALSE;
+					}
+					else
+					{
+						$this->getData($buffer, $id, $cmd, $line, $args[3]);
+					}
 				}
 				else
 				{
-					$args = explode(' ', $line);
-					$argsCount = sizeof($args);
-
 					if($argsCount == 4)
 					{
 						list($key, $flags, $exptime, $bytes) = $args;
 					}
 					else if($argsCount == 5)
 					{
+						// TODO - repsect the noreply flag
 						list($key, $flags, $exptime, $bytes, $noreply) = $args;
 					}
 					else
@@ -264,8 +288,19 @@ echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 
 					if($cmd == 'set' ||
 						($cmd == 'add' && !isset($this->data[$key])) ||
-						($cmd == 'replace' && isset($this->data[$key])))
+						($cmd == 'replace' && isset($this->data[$key])) ||
+						($cmd == 'append' && isset($this->data[$key])) ||
+						($cmd == 'prepend' && isset($this->data[$key])))
 					{
+						if($cmd == 'append')
+						{
+							$data = $this->data[$key][0].$data;
+						}
+						else if($cmd == 'prepend')
+						{
+							$data = $data.$this->data[$key][0];
+						}
+
 						if($this->insert($key, $data, $flags))
 						{
 							$this->ev_write($id, "STORED\r\n");
@@ -330,6 +365,48 @@ echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 				$this->dbStmtDeleteAll->execute();
 				$this->data = [];
 				$this->ev_write($id, "OK\r\n");
+			}
+			break;
+
+			// incr <key> <value>
+			case 'decr':
+			case 'incr':
+			{
+				$args = explode(' ', $line);
+				$argsCount = sizeof($args);
+
+				if(sizeof($args) == 2 && is_numeric($args[1]))
+				{
+					list($key, $value) = $args;
+					if(isset($this->data[$key]))
+					{
+						if(is_numeric($this->data[$key][0]) && is_numeric($value))
+						{
+							if($cmd == 'incr')
+							{
+								$v = $value + $this->data[$key][0];
+							}
+							else
+							{
+								$v = $this->data[$key][0] - $value;
+							}
+							$this->insert($key, $v, $this->data[$key][1]);
+							$this->ev_write($id, $this->data[$key][0]."\r\n");
+						}
+						else
+						{
+							$this->ev_write($id, 'CLIENT_ERROR Failed to '.$cmd." value with non-numeric part.\r\n");	
+						}
+					}
+					else
+					{
+						$this->ev_write($id, "NOT_FOUND\r\n");
+					}
+				}
+				else
+				{
+					$this->ev_write($id, 'CLIENT_ERROR Failed to '.$cmd." value, bad command line.\r\n");
+				}
 			}
 			break;
 
