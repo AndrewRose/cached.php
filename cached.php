@@ -73,10 +73,10 @@ class Handler
 		'conn_yields'           => 0,     // 64u - Number of times any connection yielded to another due to hitting the -R limit.
 		'hash_power_level'      => 0,     // 32u - Current size multiplier for hash table
 		'hash_bytes'            => 0,     // 64u - Bytes currently used by hash tables
-		'hash_is_expanding'     => FALSE, // bool - Indicates if the hash table is being grown to a new size
+		'hash_is_expanding'     => 0,     // bool - Indicates if the hash table is being grown to a new size
 		'expired_unfetched'     => 0,     // 64u - Items pulled from LRU that were never touched by get/incr/append/etc before expiring
 		'evicted_unfetched'     => 0,     // 64u - Items evicted from LRU that were never touched by get/incr/append/etc.
-		'slab_reassign_running' => FALSE, // bool - If a slab page is being moved
+		'slab_reassign_running' => 0,     // bool - If a slab page is being moved
 		'slabs_moved'           => 0      // 64u - Total slab pages moved
 	];
 
@@ -163,7 +163,7 @@ class Handler
 
 	protected function ev_write($id, $string)
 	{
-//echo '('.$id.')S: '.$string."\n";
+echo '('.$id.')S: '.$string."\n";
 		event_buffer_write($this->buffers[$id], $string);
 	}
 
@@ -172,7 +172,7 @@ class Handler
 		$this->connections[$id]['clientData'] .= event_buffer_read($buffer, $this->maxRead);
 		$clientDataLen = strlen($this->connections[$id]['clientData']);
 
-//echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
+echo '('.$id.')C: '.$this->connections[$id]['clientData']."\n";
 
 		if(!$this->connections[$id]['dataMode'] && ($pos = strpos($this->connections[$id]['clientData'], "\r\n"))) // add offset for faster search?
 		{
@@ -180,7 +180,7 @@ class Handler
 			$this->connections[$id]['clientData'] = substr($this->connections[$id]['clientData'], $pos+2, $clientDataLen);
 			$clientDataLen = strlen($this->connections[$id]['clientData']);
 			$tmp = explode(' ', $data, 2);
-			$this->cmd($buffer, $id, $tmp[0], $tmp[1]);
+			$this->cmd($buffer, $id, $tmp[0], isset($tmp[1])?$tmp[1]:FALSE);
 		}
 
 		if($this->connections[$id]['dataMode'] && $clientDataLen == ($this->connections[$id]['dataModeLength']+2)) // +2 to include the \r\n
@@ -347,7 +347,7 @@ class Handler
 				$this->updateStats();
 				foreach($this->stats as $k => $v)
 				{
-					$this->ev_write($id, 'VALUE '.$k.' '.$v."\r\n");
+					$this->ev_write($id, 'STAT '.$k.' '.$v."\r\n");
 				}
 				$this->ev_write($id, "END\r\n");
 			}
