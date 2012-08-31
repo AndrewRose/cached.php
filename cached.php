@@ -84,12 +84,12 @@ class Handler
 	{
 		$this->stats['pid'] = $pid;
 		$this->stats['version'] = $this->version;
-		$this->stats['pointer_size'] = PHP_INT_SIZE==4?'32':(PHP_INT_SIZE==8?'64':'Unknown');
+		$this->stats['pointer_size'] = PHP_INT_SIZE*4; //PHP_INT_SIZE==4?'32':(PHP_INT_SIZE==8?'64':'Unknown');
 
 		//$this->db = new \PDO('sqlite:cached.db');
 		$this->db = new \PDO('mysql:host=localhost;dbname=cached', 'root', '');
 		$this->dbStmtInsert = $this->db->prepare('INSERT INTO cache(k, data, flags) VALUES(:k, :data, :flags)');
-		$this->dbStmtUpdate = $this->db->prepare('UPDATE cache SET data = :data WHERE k = :k');
+		$this->dbStmtUpdate = $this->db->prepare('UPDATE cache SET data = :data, flags = :flags WHERE k = :k');
 		$this->dbStmtDelete = $this->db->prepare('DELETE FROM cache WHERE k = :k');
 		$this->dbStmtDeleteAll = $this->db->prepare('DELETE FROM cache');
 
@@ -206,8 +206,9 @@ class Handler
 		{
 			if(!$this->dbStmtUpdate->execute([
 				':k' => $key,
-				':data' => $data
-			])){
+				':data' => $data,
+				':flags' => $flags]))
+			{
 				echo 'failed update';
 				return FALSE;
 			}
@@ -217,8 +218,8 @@ class Handler
 			if(!$this->dbStmtInsert->execute([
 				':k' => $key,
 				':data' => $data,
-				':flags' => $flags
-			])){
+				':flags' => $flags]))
+			{
 				return FALSE;
 			}
 		}
@@ -329,7 +330,7 @@ class Handler
 				{
 					if(isset($this->data[$key])) // hit
 					{
-						$this->ev_write($id, 'VALUE '.$key.' 0 '.strlen($this->data[$key][0])."\r\n");
+						$this->ev_write($id, 'VALUE '.$key.' '.($this->data[$key][1]).' '.strlen($this->data[$key][0])."\r\n");
 						$this->ev_write($id, $this->data[$key][0]."\r\n");
 					} // else miss
 
